@@ -1,0 +1,1 @@
+export const UploadStrategyToken = 'UPLOAD_STRATEGY';
