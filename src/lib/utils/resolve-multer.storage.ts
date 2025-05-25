@@ -17,7 +17,7 @@ export function resolveMulterStorage(config: UploadModuleOptions): StorageEngine
     return diskStorage({
         destination: (req, file, cb) => {
             if (!fs.existsSync(uploadPath)) {
-              fs.mkdirSync(uploadPath, { recursive: true });
+                fs.mkdirSync(uploadPath, { recursive: true });
             }
             cb(null, uploadPath);
         },

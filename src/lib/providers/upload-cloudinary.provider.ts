@@ -1,11 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
-import * as path from 'path';
-import * as fs from 'fs/promises';
 import { v2 as cloudinary } from 'cloudinary';
-import { v4 as uuidv4 } from 'uuid';
 import { UploadProvider } from '../interfaces/upload-provider.interface';
 import { UploadModuleOptions } from '../interfaces/upload-module-options.interface';
 import { UploadOptionsToken } from '../strategies/upload-options.token';
+import { unlink } from 'fs/promises';
 
 @Injectable()
 export class UploadCloudinaryProvider implements UploadProvider {
@@ -24,13 +22,9 @@ export class UploadCloudinaryProvider implements UploadProvider {
     }
 
     public async handleSingleFileUpload(file: Express.Multer.File): Promise<any> {
-        const uniqueFilename = `${uuidv4()}-${file.originalname}`;
-        const tempPath = path.join(process.cwd(), 'temp', uniqueFilename);
-        await fs.mkdir(path.dirname(tempPath), { recursive: true });
-        await fs.writeFile(tempPath, file.buffer);
 
-        try {
-            const result = await cloudinary.uploader.upload(tempPath, {
+       try {
+            const result = await cloudinary.uploader.upload(file.path, {
                 folder: 'uploads',
                 resource_type: 'auto',
             });
@@ -41,9 +35,13 @@ export class UploadCloudinaryProvider implements UploadProvider {
                 mimeType: file.mimetype,
                 size: file.size,
             };
-        } finally {
-            await fs.unlink(tempPath);
-        }
+       } finally {
+            try {
+                await unlink(file.path);
+            } catch (error) {
+                console.warn(`Failed to delete local file: ${file.path}`, error.message);
+            }
+       }
     }
 
     public async handleMultipleFileUpload(files: Express.Multer.File[]): Promise<any[]> {
@@ -55,4 +53,3 @@ export class UploadCloudinaryProvider implements UploadProvider {
         return uploaded;
     }
 }
-

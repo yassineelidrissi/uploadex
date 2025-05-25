@@ -37,7 +37,7 @@ export function mapFile(file: Express.Multer.File) {
 export async function cleanupFile(filePath: string) {
     try {
         await fs.unlink(filePath);
-    } catch (e) {
-        console.error(`Cleanup failed for ${filePath}: ${e.message}`);
+    } catch (error) {
+        console.error(`Cleanup failed for ${filePath}: ${error.message}`);
     }
 }

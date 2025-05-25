@@ -1,6 +1,4 @@
-// uploads/uploads.module.ts
 import { DynamicModule, Module } from '@nestjs/common';
-import { UploadsController } from './uploads.controller';
 import { UploadsService } from './providers/uploads.service';
 import { MulterModule } from '@nestjs/platform-express';
 import { UploadLocalProvider } from './providers/upload-local.provider';
@@ -17,46 +15,45 @@ export class UploadsModule {
   static registerAsync<T extends UploadProviderType>(options: {
     useFactory: () => UploadModuleOptions<T> | Promise<UploadModuleOptions<T>>;
   }): DynamicModule {
-    return {
-      module: UploadsModule,
-      imports: [
-        ConfigModule,
-        UploadCoreModule.registerAsync(options),
-        MulterModule.registerAsync({
-          imports: [UploadCoreModule.registerAsync(options)],
-          inject: [UploadOptionsToken],
-          useFactory: async (uploadOptions: UploadModuleOptions) => {
-            if (uploadOptions.provider === 'local') {
-              return await multerOptionsFactory(uploadOptions as UploadModuleOptions<'local'>);
-            }
-            return { storage: undefined };
-          },
-        }),
-      ],
-      providers: [
-        UploadLocalProvider,
-        UploadCloudinaryProvider,
-        {
-          provide: UploadStrategyToken,
-          useFactory: (
-            opts: UploadModuleOptions,
-            local: UploadLocalProvider,
-            cloud: UploadCloudinaryProvider,
-          ) => {
-            switch (opts.provider) {
-              case 'cloudinary':
-                return cloud;
-              case 'local':
-              default:
-                return local;
-            }
-          },
-          inject: [UploadOptionsToken, UploadLocalProvider, UploadCloudinaryProvider],
-        },
-        UploadsService,
-      ],
-      controllers: [UploadsController],
-      exports: [UploadsService],
-    };
-  }
+        return {
+            module: UploadsModule,
+            imports: [
+                ConfigModule,
+                UploadCoreModule.registerAsync(options),
+                MulterModule.registerAsync({
+                    imports: [UploadCoreModule.registerAsync(options)],
+                    inject: [UploadOptionsToken],
+                    useFactory: async (uploadOptions: UploadModuleOptions) => {
+                    if (uploadOptions.provider === 'local') {
+                        return await multerOptionsFactory(uploadOptions as UploadModuleOptions<'local'>);
+                    }
+                    return { storage: undefined };
+                    },
+                }),
+            ],
+            providers: [
+                UploadLocalProvider,
+                UploadCloudinaryProvider,
+                {
+                    provide: UploadStrategyToken,
+                    useFactory: (
+                    opts: UploadModuleOptions,
+                    local: UploadLocalProvider,
+                    cloud: UploadCloudinaryProvider,
+                    ) => {
+                    switch (opts.provider) {
+                        case 'cloudinary':
+                        return cloud;
+                        case 'local':
+                        default:
+                        return local;
+                    }
+                    },
+                    inject: [UploadOptionsToken, UploadLocalProvider, UploadCloudinaryProvider],
+                },
+                UploadsService,
+            ],
+            exports: [UploadsService],
+        };
+    }
 }
