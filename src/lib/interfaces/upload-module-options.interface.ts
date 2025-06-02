@@ -6,7 +6,7 @@ export type UploadProviderConfig<T extends UploadProviderType> =
     : T extends 'cloudinary'
     ? { cloudName: string; apiKey: string; apiSecret: string }
     : T extends 's3'
-    ? { bucket: string; accessKeyId: string; secretAccessKey: string }
+    ? { bucket: string; accessKeyId: string; secretAccessKey: string, region: string, endpoint?: string }
     : T extends 'azure'
     ? { accountName: string; accountKey: string; containerName: string }
     : never;

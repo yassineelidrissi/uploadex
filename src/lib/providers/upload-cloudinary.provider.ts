@@ -3,7 +3,7 @@ import { v2 as cloudinary } from 'cloudinary';
 import { UploadProvider } from '../interfaces/upload-provider.interface';
 import { UploadModuleOptions } from '../interfaces/upload-module-options.interface';
 import { UploadOptionsToken } from '../strategies/upload-options.token';
-import { unlink } from 'fs/promises';
+import { Readable } from 'stream';
 
 @Injectable()
 export class UploadCloudinaryProvider implements UploadProvider {
@@ -21,27 +21,37 @@ export class UploadCloudinaryProvider implements UploadProvider {
         });
     }
 
-    public async handleSingleFileUpload(file: Express.Multer.File): Promise<any> {
-
-       try {
-            const result = await cloudinary.uploader.upload(file.path, {
+    private async streamUpload(fileBuffer: Buffer): Promise<any> {
+        return new Promise((resolve, reject) => {
+            const uploadStream = cloudinary.uploader.upload_stream({
                 folder: 'uploads',
                 resource_type: 'auto',
-            });
+                },
+                (error, result) => {
+                    if (error) {
+                        console.error('[Cloudinary Error]', error);
+                        return reject(error);
+                    }
+                    resolve(result);
+                }
+            );
 
-            return {
-                fileName: result.original_filename,
-                filePath: result.secure_url,
-                mimeType: file.mimetype,
-                size: file.size,
-            };
-       } finally {
-            try {
-                await unlink(file.path);
-            } catch (error) {
-                console.warn(`Failed to delete local file: ${file.path}`, error.message);
-            }
-       }
+            const readable = Readable.from(fileBuffer);
+            readable.on('error', reject);
+            readable.pipe(uploadStream);
+        });
+    }
+
+    public async handleSingleFileUpload(file: Express.Multer.File): Promise<any> {
+
+        const result = await this.streamUpload(file.buffer);
+
+        return {
+            fileName: file.originalname,
+            filePath: result.secure_url,
+            mimeType: file.mimetype,
+            size: file.size,
+        };
     }
 
     public async handleMultipleFileUpload(files: Express.Multer.File[]): Promise<any[]> {
