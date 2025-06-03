@@ -1,15 +1,18 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, InternalServerErrorException } from '@nestjs/common';
 import { UploadProvider } from '../interfaces/upload-provider.interface';
 import { UploadModuleOptions } from '../interfaces/upload-module-options.interface';
 import { UploadOptionsToken } from '../strategies/upload-options.token';
 import { v4 as uuidv4 } from 'uuid';
 import { S3Client, PutObjectCommand, HeadBucketCommand, CreateBucketCommand, BucketLocationConstraint } from '@aws-sdk/client-s3';
+import { cleanupFile, validateFile } from '../helpers/upload-validation.helper';
+import * as fs from 'fs';
 
 @Injectable()
 export class UploadS3Provider implements UploadProvider {
     private readonly s3: S3Client;
     private readonly bucket: string;
     private readonly region: string;
+    private readonly maxSafeMemorySize: number;
 
     constructor(
         @Inject(UploadOptionsToken)
@@ -18,6 +21,7 @@ export class UploadS3Provider implements UploadProvider {
         const config = this.options.config;
         this.bucket = config.bucket;
         this.region = config.region;
+        this.maxSafeMemorySize = this.options.maxSafeMemorySize ?? 10 * 1024 * 1024;
 
         this.s3 = new S3Client({
             region: this.region,
@@ -26,54 +30,140 @@ export class UploadS3Provider implements UploadProvider {
                 secretAccessKey: config.secretAccessKey,
             },
             ...(config.endpoint
-            ? {
-                endpoint: config.endpoint,
-                forcePathStyle: true,
+                ? {
+                    endpoint: config.endpoint,
+                    forcePathStyle: true,
                 }
-            : {}),
+                : {}),
         });
 
+        // If using LocalStack, auto create bucket
         if (config.endpoint) {
-            this.s3.send(new HeadBucketCommand({ Bucket: this.bucket }))
-            .catch(() => {
-                return this.s3.send(new CreateBucketCommand({
+            this.s3.send(new HeadBucketCommand({ Bucket: this.bucket })).catch(() => {
+                return this.s3.send(
+                    new CreateBucketCommand({
                         Bucket: this.bucket,
                         ...(this.region !== 'us-east-1' && {
-                        CreateBucketConfiguration: {
-                            LocationConstraint: this.region as BucketLocationConstraint,
-                        },
+                            CreateBucketConfiguration: {
+                                LocationConstraint: this.region as BucketLocationConstraint,
+                            },
+                        }),
                     }),
-                }));
+                );
             });
         }
 
     }
 
+    private getS3Url(key: string): string {
+        const endpoint = this.options.config.endpoint;
+        return endpoint
+            ? endpoint.replace('localstack', 'localhost') + `/${this.bucket}/${key}`
+            : `https://${this.bucket}.s3.${this.region}.amazonaws.com/${key}`;
+    }
+
     async handleSingleFileUpload(file: Express.Multer.File): Promise<any> {
+        if (!file) throw new BadRequestException('No file uploaded');
+
+        const maxSize = this.options.maxFileSize ?? 50 * 1024 * 1024;
+        await validateFile(file, maxSize);
+
         const key = `${uuidv4()}-${file.originalname}`;
 
-        await this.s3.send(
-            new PutObjectCommand({
-                Bucket: this.bucket,
-                Key: key,
-                Body: file.buffer,
-                ContentType: file.mimetype,
-            }),
-        );
+        try {
+            if (file.size <= this.maxSafeMemorySize && file.buffer) {
+                // Use memory buffer
+                await this.s3.send(
+                    new PutObjectCommand({
+                        Bucket: this.bucket,
+                        Key: key,
+                        Body: file.buffer,
+                        ContentType: file.mimetype,
+                    }),
+                );
+            } else if (file.path) {
+                // Stream for disk
+                const fileStream = fs.createReadStream(file.path);
+                await this.s3.send(
+                    new PutObjectCommand({
+                        Bucket: this.bucket,
+                        Key: key,
+                        Body: fileStream,
+                        ContentType: file.mimetype,
+                    }),
+                );
+                await cleanupFile(file.path);
+            } else {
+                throw new Error('No valid file buffer or path');
+            }
 
-        const url = this.options.config.endpoint
-            ? this.options.config.endpoint.replace('localstack', 'localhost') + `/${this.bucket}/${key}`
-            : `https://${this.bucket}.s3.${this.region}.amazonaws.com/${key}`;
-
-        return {
-            fileName: file.originalname,
-            filePath: url,
-            mimeType: file.mimetype,
-            size: file.size,
-        };
+            return {
+                fileName: file.originalname,
+                filePath: this.getS3Url(key),
+                mimeType: file.mimetype,
+                size: file.size,
+            };
+        } catch (error) {
+            if (file?.path) await cleanupFile(file.path);
+            throw new InternalServerErrorException(`S3 upload failed: ${error.message}`);
+        }
     }
 
     async handleMultipleFileUpload(files: Express.Multer.File[]): Promise<any[]> {
-        return Promise.all(files.map(file => this.handleSingleFileUpload(file)));
+        if (!files?.length) throw new BadRequestException('No files uploaded');
+    
+        const maxSize = this.options.maxFileSize ?? 50 * 1024 * 1024;
+    
+        try {
+            const uploadTasks = files.map(async (file) => {
+                await validateFile(file, maxSize);
+    
+                const key = `${uuidv4()}-${file.originalname}`;
+    
+                try {
+                    if (file.size <= this.maxSafeMemorySize && file.buffer) {
+                        // Use memory buffer
+                        await this.s3.send(
+                            new PutObjectCommand({
+                                Bucket: this.bucket,
+                                Key: key,
+                                Body: file.buffer,
+                                ContentType: file.mimetype,
+                            }),
+                        );
+                    } else if (file.path) {
+                        // Stream for disk
+                        const fileStream = fs.createReadStream(file.path);
+                        await this.s3.send(
+                            new PutObjectCommand({
+                                Bucket: this.bucket,
+                                Key: key,
+                                Body: fileStream,
+                                ContentType: file.mimetype,
+                            }),
+                        );
+                        await cleanupFile(file.path);
+                    } else {
+                        throw new Error('No valid file buffer or path');
+                    }
+    
+                    return {
+                        fileName: file.originalname,
+                        filePath: this.getS3Url(key),
+                        mimeType: file.mimetype,
+                        size: file.size,
+                    };
+                } catch (error) {
+                    if (file?.path) await cleanupFile(file.path);
+                    throw new InternalServerErrorException(`S3 upload failed for ${file.originalname}: ${error.message}`);
+                }
+            });
+    
+            return await Promise.all(uploadTasks);
+        } catch (error) {
+            await Promise.all(files.map(f => cleanupFile(f.path)));
+            throw new InternalServerErrorException(`Multiple S3 upload failed: ${error.message}`);
+        }
     }
+    
 }
