@@ -5,7 +5,7 @@ import { UploadModuleOptions } from '../interfaces/upload-module-options.interfa
 import { UploadOptionsToken } from '../strategies/upload-options.token';
 import { Readable } from 'stream';
 import * as fs from 'fs';
-import { cleanupFile, validateFile } from '../helpers/upload-validation.helper';
+import { cleanupFile, validateFile, validateFiles } from '../helpers/upload-validation.helper';
 
 @Injectable()
 export class UploadCloudinaryProvider implements UploadProvider {
@@ -61,10 +61,12 @@ export class UploadCloudinaryProvider implements UploadProvider {
     public async handleSingleFileUpload(file: Express.Multer.File): Promise<any> {
         if (!file) throw new BadRequestException('No file uploaded');
 
-        const maxSize = this.options.maxFileSize ?? 50 * 1024 * 1024;
-
         try {
-            await validateFile(file, maxSize);
+            await validateFile(file, {
+                maxSize: this.options.maxFileSize,
+                allowedExtensions: this.options.allowedExtensions,
+                allowedMimeTypes: this.options.allowedMimeTypes
+            });
 
             let result: any;
             if (file.size <= this.maxSafeMemorySize && file.buffer) {
@@ -91,14 +93,18 @@ export class UploadCloudinaryProvider implements UploadProvider {
 
     public async handleMultipleFileUpload(files: Express.Multer.File[]): Promise<any[]> {
         if (!files?.length) throw new BadRequestException('No files uploaded');
-
-        const maxSize = this.options.maxFileSize ?? 50 * 1024 * 1024;
-        const uploaded: any[] = [];
-
+        
         try {
-            for (const file of files) {
-                await validateFile(file, maxSize);
-
+            await validateFiles(files, {
+                maxFiles: this.options.maxFiles,
+                maxSize: this.options.maxFileSize,
+                allowedExtensions: this.options.allowedExtensions,
+                allowedMimeTypes: this.options.allowedMimeTypes,
+            });
+    
+            const uploaded: any[] = [];
+    
+            const uploadTasks = files.map(async (file) => {
                 let result: any;
                 if (file.size <= this.maxSafeMemorySize && file.buffer) {
                     result = await this.streamUploadBuffer(file.buffer);
@@ -108,15 +114,16 @@ export class UploadCloudinaryProvider implements UploadProvider {
                 } else {
                     throw new Error('Unsupported file format');
                 }
-
+    
                 uploaded.push({
                     fileName: file.originalname,
                     filePath: result.secure_url,
                     mimeType: file.mimetype,
                     size: file.size,
                 });
-            }
-
+            });
+    
+            await Promise.all(uploadTasks);
             return uploaded;
         } catch (error) {
             await Promise.all(files.map(f => cleanupFile(f.path)));

@@ -4,7 +4,7 @@ import { UploadModuleOptions } from '../interfaces/upload-module-options.interfa
 import { UploadOptionsToken } from '../strategies/upload-options.token';
 import { v4 as uuidv4 } from 'uuid';
 import { S3Client, PutObjectCommand, HeadBucketCommand, CreateBucketCommand, BucketLocationConstraint } from '@aws-sdk/client-s3';
-import { cleanupFile, validateFile } from '../helpers/upload-validation.helper';
+import { cleanupFile, validateFile, validateFiles } from '../helpers/upload-validation.helper';
 import * as fs from 'fs';
 
 @Injectable()
@@ -65,8 +65,11 @@ export class UploadS3Provider implements UploadProvider {
     async handleSingleFileUpload(file: Express.Multer.File): Promise<any> {
         if (!file) throw new BadRequestException('No file uploaded');
 
-        const maxSize = this.options.maxFileSize ?? 50 * 1024 * 1024;
-        await validateFile(file, maxSize);
+        await validateFile(file, {
+            maxSize: this.options.maxFileSize,
+            allowedExtensions: this.options.allowedExtensions,
+            allowedMimeTypes: this.options.allowedMimeTypes
+        });
 
         const key = `${uuidv4()}-${file.originalname}`;
 
@@ -111,12 +114,16 @@ export class UploadS3Provider implements UploadProvider {
 
     async handleMultipleFileUpload(files: Express.Multer.File[]): Promise<any[]> {
         if (!files?.length) throw new BadRequestException('No files uploaded');
-    
-        const maxSize = this.options.maxFileSize ?? 50 * 1024 * 1024;
-    
+        
         try {
+            await validateFiles(files, {
+                maxFiles: this.options.maxFiles,
+                maxSize: this.options.maxFileSize,
+                allowedExtensions: this.options.allowedExtensions,
+                allowedMimeTypes: this.options.allowedMimeTypes
+            });
+
             const uploadTasks = files.map(async (file) => {
-                await validateFile(file, maxSize);
     
                 const key = `${uuidv4()}-${file.originalname}`;
     
