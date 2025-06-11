@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, InternalServerErrorException } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { UploadProvider } from '../interfaces/upload-provider.interface';
 import { UploadModuleOptions } from '../interfaces/upload-module-options.interface';
 import { UploadOptionsToken } from '../strategies/upload-options.token';
@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { S3Client, PutObjectCommand, HeadBucketCommand, CreateBucketCommand, BucketLocationConstraint } from '@aws-sdk/client-s3';
 import { cleanupFile, validateFile, validateFiles } from '../helpers/upload-validation.helper';
 import * as fs from 'fs';
+import { UploadexError } from '../errors/uploadex-error';
 
 @Injectable()
 export class UploadS3Provider implements UploadProvider {
@@ -63,7 +64,8 @@ export class UploadS3Provider implements UploadProvider {
     }
 
     async handleSingleFileUpload(file: Express.Multer.File): Promise<any> {
-        if (!file) throw new BadRequestException('No file uploaded');
+        if (!file) throw new UploadexError('UNKNOWN', 'No file uploaded');
+
 
         await validateFile(file, {
             maxSize: this.options.maxFileSize,
@@ -97,7 +99,7 @@ export class UploadS3Provider implements UploadProvider {
                 );
                 await cleanupFile(file.path);
             } else {
-                throw new Error('No valid file buffer or path');
+                throw new UploadexError('UNKNOWN', 'No valid file buffer or path');
             }
 
             return {
@@ -108,12 +110,14 @@ export class UploadS3Provider implements UploadProvider {
             };
         } catch (error) {
             if (file?.path) await cleanupFile(file.path);
-            throw new InternalServerErrorException(`S3 upload failed: ${error.message}`);
+            throw error instanceof UploadexError
+                ? error
+                : new UploadexError('UNKNOWN', `S3 upload failed: ${error.message}`, { cause: error });
         }
     }
 
     async handleMultipleFileUpload(files: Express.Multer.File[]): Promise<any[]> {
-        if (!files?.length) throw new BadRequestException('No files uploaded');
+        if (!files?.length) throw new UploadexError('UNKNOWN', 'No files uploaded');
         
         try {
             await validateFiles(files, {
@@ -151,7 +155,7 @@ export class UploadS3Provider implements UploadProvider {
                         );
                         await cleanupFile(file.path);
                     } else {
-                        throw new Error('No valid file buffer or path');
+                        throw new UploadexError('UNKNOWN', 'No valid file buffer or path');
                     }
     
                     return {
@@ -162,14 +166,18 @@ export class UploadS3Provider implements UploadProvider {
                     };
                 } catch (error) {
                     if (file?.path) await cleanupFile(file.path);
-                    throw new InternalServerErrorException(`S3 upload failed for ${file.originalname}: ${error.message}`);
+                    throw error instanceof UploadexError
+                        ? error
+                        : new UploadexError('UNKNOWN', `S3 upload failed: ${error.message}`, { cause: error });
                 }
             });
     
             return await Promise.all(uploadTasks);
         } catch (error) {
             await Promise.all(files.map(f => cleanupFile(f.path)));
-            throw new InternalServerErrorException(`Multiple S3 upload failed: ${error.message}`);
+            throw error instanceof UploadexError
+                ? error
+                : new UploadexError('UNKNOWN', `Multiple S3 upload failed: ${error.message}`, { cause: error });
         }
     }
     
