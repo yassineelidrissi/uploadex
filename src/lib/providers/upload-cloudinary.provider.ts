@@ -1,4 +1,4 @@
-import { Inject, Injectable, BadRequestException, InternalServerErrorException } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { v2 as cloudinary } from 'cloudinary';
 import { UploadProvider } from '../interfaces/upload-provider.interface';
 import { UploadModuleOptions } from '../interfaces/upload-module-options.interface';
@@ -6,6 +6,7 @@ import { UploadOptionsToken } from '../strategies/upload-options.token';
 import { Readable } from 'stream';
 import * as fs from 'fs';
 import { cleanupFile, validateFile, validateFiles } from '../helpers/upload-validation.helper';
+import { UploadexError } from '../errors/uploadex-error';
 
 @Injectable()
 export class UploadCloudinaryProvider implements UploadProvider {
@@ -59,7 +60,7 @@ export class UploadCloudinaryProvider implements UploadProvider {
     }
 
     public async handleSingleFileUpload(file: Express.Multer.File): Promise<any> {
-        if (!file) throw new BadRequestException('No file uploaded');
+        if (!file) throw new UploadexError('UNKNOWN', 'No file uploaded');
 
         try {
             await validateFile(file, {
@@ -75,7 +76,7 @@ export class UploadCloudinaryProvider implements UploadProvider {
                 result = await this.streamUploadFilePath(file.path);
                 await cleanupFile(file.path);
             } else {
-                throw new Error('Unsupported file format: no valid buffer or path.');
+                throw new UploadexError('UNKNOWN', 'Unsupported file format: no valid buffer or path.');
             }
 
             return {
@@ -87,12 +88,14 @@ export class UploadCloudinaryProvider implements UploadProvider {
 
         } catch (error) {
             if (file?.path) await cleanupFile(file.path);
-            throw new InternalServerErrorException(`Cloudinary upload failed: ${error.message}`);
+            throw error instanceof UploadexError
+                ? error
+                : new UploadexError('UNKNOWN', `Cloudinary upload failed: ${error.message}`, { cause: error });
         }
     }
 
     public async handleMultipleFileUpload(files: Express.Multer.File[]): Promise<any[]> {
-        if (!files?.length) throw new BadRequestException('No files uploaded');
+        if (!files?.length) throw new UploadexError('UNKNOWN', 'No files uploaded');
         
         try {
             await validateFiles(files, {
@@ -105,29 +108,41 @@ export class UploadCloudinaryProvider implements UploadProvider {
             const uploaded: any[] = [];
     
             const uploadTasks = files.map(async (file) => {
-                let result: any;
-                if (file.size <= this.maxSafeMemorySize && file.buffer) {
-                    result = await this.streamUploadBuffer(file.buffer);
-                } else if (file.path) {
-                    result = await this.streamUploadFilePath(file.path);
-                    await cleanupFile(file.path);
-                } else {
-                    throw new Error('Unsupported file format');
+                
+                try {
+                    let result: any;
+
+                    if (file.size <= this.maxSafeMemorySize && file.buffer) {
+                        result = await this.streamUploadBuffer(file.buffer);
+                    } else if (file.path) {
+                        result = await this.streamUploadFilePath(file.path);
+                        await cleanupFile(file.path);
+                    } else {
+                        throw new UploadexError('UNKNOWN', 'Unsupported file format: no valid buffer or path.');
+                    }
+        
+                    uploaded.push({
+                        fileName: file.originalname,
+                        filePath: result.secure_url,
+                        mimeType: file.mimetype,
+                        size: file.size,
+                    });
+                } catch(error) {
+                    if (file?.path) await cleanupFile(file.path);
+                    throw error instanceof UploadexError
+                        ? error
+                        : new UploadexError('UNKNOWN', `Cloudinary upload failed: ${error.message}`, { cause: error });
                 }
-    
-                uploaded.push({
-                    fileName: file.originalname,
-                    filePath: result.secure_url,
-                    mimeType: file.mimetype,
-                    size: file.size,
-                });
+
             });
     
             await Promise.all(uploadTasks);
             return uploaded;
         } catch (error) {
             await Promise.all(files.map(f => cleanupFile(f.path)));
-            throw new InternalServerErrorException(`Multiple file upload failed: ${error.message}`);
+            throw error instanceof UploadexError
+                ? error
+                : new UploadexError('UNKNOWN', `Multiple Cloudinary upload failed: ${error.message}`, { cause: error });
         }
     }
 }
