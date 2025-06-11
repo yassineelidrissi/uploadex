@@ -4,6 +4,7 @@ import { ALLOWED_EXTENSIONS, ALLOWED_MIME_TYPES } from '../constants/upload.cons
 import { FileValidationOptions } from '../interfaces/file-validation-options.interface';
 import { UploadexError } from '../errors/uploadex-error';
 import { MulterError } from 'multer';
+import { UploadConfigStorage } from '../utils/upload-config.storage';
 
 async function validateFileContent(file: Express.Multer.File) {
     if (file.mimetype.startsWith('image/')) {
@@ -63,17 +64,36 @@ export async function cleanupFile(filePath: string) {
 }
 
 export function transformMulterError(error: any): Error {
+    const config = UploadConfigStorage.get();
+    const debug = config?.debug === true;
+
     if (error instanceof MulterError) {
+        const baseDetails = debug ? { cause: error } : undefined;
+
         switch (error.code) {
-            case 'LIMIT_FILE_SIZE':
-                return new UploadexError('FILE_TOO_LARGE', 'File too large', { cause: error });
-            case 'LIMIT_FILE_COUNT':
-                return new UploadexError('MAX_FILES_EXCEEDED', 'Too many files uploaded', { cause: error });
-            case 'LIMIT_UNEXPECTED_FILE':
-                return new UploadexError('INVALID_EXTENSION', 'Unexpected file field', { cause: error });
-            default:
-                return new UploadexError('UNKNOWN', error.message, { cause: error });
+        case 'LIMIT_FILE_SIZE':
+            return new UploadexError('FILE_TOO_LARGE', 'File too large', {
+                maxFileSize: config.maxFileSize,
+                ...baseDetails,
+            });
+
+        case 'LIMIT_FILE_COUNT':
+            return new UploadexError('MAX_FILES_EXCEEDED', 'Too many files uploaded', {
+                maxFiles: config.maxFiles,
+                ...baseDetails,
+            });
+
+        case 'LIMIT_UNEXPECTED_FILE':
+            return new UploadexError('INVALID_EXTENSION', 'Unexpected file field received', {
+                ...baseDetails,
+            });
+
+        default:
+            return new UploadexError('UNKNOWN', error.message || 'Unknown Multer error', {
+                ...baseDetails,
+            });
         }
     }
+
     return error;
 }
