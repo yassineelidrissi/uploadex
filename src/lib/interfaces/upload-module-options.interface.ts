@@ -19,5 +19,7 @@ export interface UploadModuleOptions<T extends UploadProviderType = UploadProvid
     allowedMimeTypes?: string[];
     allowedExtensions?: string[];
     maxSafeMemorySize?: number;
+    uploadTimeoutMs?: number;
+    uploadRetries?: number; 
     debug?: boolean;
 }

@@ -5,7 +5,9 @@ export type UploadexErrorCode =
     | 'MAX_FILES_EXCEEDED'
     | 'CONFIGURATION_ERROR'
     | 'PROVIDER_NOT_IMPLEMENTED'
-    | 'UNKNOWN';
+    | 'UNKNOWN'
+    | 'UPLOAD_FAILED'
+    | 'TIMEOUT';
 
 export class UploadexError extends Error {
     public readonly code: UploadexErrorCode;
