@@ -22,7 +22,16 @@ export class UploadCloudinaryProvider implements UploadProvider {
         @Inject(UploadOptionsToken)
         private readonly options: UploadModuleOptions<'cloudinary'>
     ) {
+        if (this.options.provider !== 'cloudinary') return;
+
         const cloudinaryConfig = this.options.config;
+
+        if (!cloudinaryConfig.cloudName || !cloudinaryConfig.apiKey || !cloudinaryConfig.apiSecret) {
+            throw new UploadexError(
+              'CONFIGURATION_ERROR',
+              'Cloudinary config is missing cloudName, apiKey, or apiSecret'
+            );
+        }
 
         cloudinary.config({
             cloud_name: cloudinaryConfig.cloudName,

@@ -23,12 +23,21 @@ export class UploadS3Provider implements UploadProvider {
         @Inject(UploadOptionsToken)
         private readonly options: UploadModuleOptions<'s3'>,
     ) {
+        if (options.provider !== 's3') return;
+
         const config = this.options.config;
         this.bucket = config.bucket;
         this.region = config.region;
         this.maxSafeMemorySize = this.options.maxSafeMemorySize ?? 10 * 1024 * 1024;
         this.timeoutMs = this.options.uploadTimeoutMs;
         this.retries = this.options.uploadRetries;
+
+        if (!config.region || !config.bucket || !config.accessKeyId || !config.secretAccessKey) {
+            throw new UploadexError(
+              'CONFIGURATION_ERROR',
+              'S3 config is missing region, bucket, accessKeyId, or secretAccessKey'
+            );
+        }
 
         this.s3 = new S3Client({
             region: this.region,

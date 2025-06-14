@@ -8,7 +8,7 @@ export type UploadProviderConfig<T extends UploadProviderType> =
     : T extends 's3'
     ? { bucket: string; accessKeyId: string; secretAccessKey: string, region: string, endpoint?: string }
     : T extends 'azure'
-    ? { accountName: string; accountKey: string; containerName: string }
+    ? { accountName: string; accountKey: string; containerName: string, endpoint?: string}
     : never;
 
 export interface UploadModuleOptions<T extends UploadProviderType = UploadProviderType> {
