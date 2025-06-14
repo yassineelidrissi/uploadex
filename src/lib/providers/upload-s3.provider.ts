@@ -2,11 +2,13 @@ import { Inject, Injectable } from '@nestjs/common';
 import { UploadProvider } from '../interfaces/upload-provider.interface';
 import { UploadModuleOptions } from '../interfaces/upload-module-options.interface';
 import { UploadOptionsToken } from '../strategies/upload-options.token';
-import { v4 as uuidv4 } from 'uuid';
 import { S3Client, PutObjectCommand, HeadBucketCommand, CreateBucketCommand, BucketLocationConstraint } from '@aws-sdk/client-s3';
 import { cleanupFile, validateFile, validateFiles } from '../helpers/upload-validation.helper';
 import * as fs from 'fs';
 import { UploadexError } from '../errors/uploadex-error';
+import { safeUpload } from '../helpers/safe-upload.helper';
+import { UploadedFileMeta } from '../interfaces/uploaded-file-meta.interface';
+import { generateSafeFilename } from '../helpers/filename.helper';
 
 @Injectable()
 export class UploadS3Provider implements UploadProvider {
@@ -14,15 +16,28 @@ export class UploadS3Provider implements UploadProvider {
     private readonly bucket: string;
     private readonly region: string;
     private readonly maxSafeMemorySize: number;
+    private readonly timeoutMs?: number;
+    private readonly retries?: number;
 
     constructor(
         @Inject(UploadOptionsToken)
         private readonly options: UploadModuleOptions<'s3'>,
     ) {
+        if (options.provider !== 's3') return;
+
         const config = this.options.config;
         this.bucket = config.bucket;
         this.region = config.region;
         this.maxSafeMemorySize = this.options.maxSafeMemorySize ?? 10 * 1024 * 1024;
+        this.timeoutMs = this.options.uploadTimeoutMs;
+        this.retries = this.options.uploadRetries;
+
+        if (!config.region || !config.bucket || !config.accessKeyId || !config.secretAccessKey) {
+            throw new UploadexError(
+              'CONFIGURATION_ERROR',
+              'S3 config is missing region, bucket, accessKeyId, or secretAccessKey'
+            );
+        }
 
         this.s3 = new S3Client({
             region: this.region,
@@ -63,21 +78,19 @@ export class UploadS3Provider implements UploadProvider {
             : `https://${this.bucket}.s3.${this.region}.amazonaws.com/${key}`;
     }
 
-    async handleSingleFileUpload(file: Express.Multer.File): Promise<any> {
+    public async handleSingleFileUpload(file: Express.Multer.File): Promise<UploadedFileMeta> {
         if (!file) throw new UploadexError('UNKNOWN', 'No file uploaded');
-
 
         await validateFile(file, {
             maxSize: this.options.maxFileSize,
             allowedExtensions: this.options.allowedExtensions,
-            allowedMimeTypes: this.options.allowedMimeTypes
+            allowedMimeTypes: this.options.allowedMimeTypes,
         });
 
-        const key = `${uuidv4()}-${file.originalname}`;
+        const key = generateSafeFilename(file.originalname, 's3');
 
-        try {
+        const task = async () => {
             if (file.size <= this.maxSafeMemorySize && file.buffer) {
-                // Use memory buffer
                 await this.s3.send(
                     new PutObjectCommand({
                         Bucket: this.bucket,
@@ -87,8 +100,7 @@ export class UploadS3Provider implements UploadProvider {
                     }),
                 );
             } else if (file.path) {
-                // Stream for disk
-                const fileStream = fs.createReadStream(file.path);
+            const fileStream = fs.createReadStream(file.path);
                 await this.s3.send(
                     new PutObjectCommand({
                         Bucket: this.bucket,
@@ -97,43 +109,55 @@ export class UploadS3Provider implements UploadProvider {
                         ContentType: file.mimetype,
                     }),
                 );
-                await cleanupFile(file.path);
             } else {
                 throw new UploadexError('UNKNOWN', 'No valid file buffer or path');
             }
 
             return {
                 fileName: file.originalname,
+                storedName: key,
                 filePath: this.getS3Url(key),
                 mimeType: file.mimetype,
                 size: file.size,
             };
+        };
+
+        try {
+            const result = await safeUpload(task, {
+                timeoutMs: this.timeoutMs,
+                retries: this.retries,
+                onCleanup: async () => {
+                    if (file.path) await cleanupFile(file.path);
+                },
+            });
+
+            if (file.path) await cleanupFile(file.path);
+            return result;
         } catch (error) {
-            if (file?.path) await cleanupFile(file.path);
             throw error instanceof UploadexError
-                ? error
-                : new UploadexError('UNKNOWN', `S3 upload failed: ${error.message}`, { cause: error });
+            ? error
+            : new UploadexError('UNKNOWN', `S3 upload failed: ${error.message}`, { cause: error });
         }
     }
 
-    async handleMultipleFileUpload(files: Express.Multer.File[]): Promise<any[]> {
+    public async handleMultipleFileUpload(files: Express.Multer.File[]): Promise<UploadedFileMeta[]> {
         if (!files?.length) throw new UploadexError('UNKNOWN', 'No files uploaded');
-        
+
         try {
             await validateFiles(files, {
                 maxFiles: this.options.maxFiles,
                 maxSize: this.options.maxFileSize,
                 allowedExtensions: this.options.allowedExtensions,
-                allowedMimeTypes: this.options.allowedMimeTypes
+                allowedMimeTypes: this.options.allowedMimeTypes,
             });
 
+            const uploaded: UploadedFileMeta[] = [];
+
             const uploadTasks = files.map(async (file) => {
-    
-                const key = `${uuidv4()}-${file.originalname}`;
-    
-                try {
+                const key = generateSafeFilename(file.originalname, 's3');
+
+                const task = async () => {
                     if (file.size <= this.maxSafeMemorySize && file.buffer) {
-                        // Use memory buffer
                         await this.s3.send(
                             new PutObjectCommand({
                                 Bucket: this.bucket,
@@ -143,8 +167,7 @@ export class UploadS3Provider implements UploadProvider {
                             }),
                         );
                     } else if (file.path) {
-                        // Stream for disk
-                        const fileStream = fs.createReadStream(file.path);
+                    const fileStream = fs.createReadStream(file.path);
                         await this.s3.send(
                             new PutObjectCommand({
                                 Bucket: this.bucket,
@@ -153,31 +176,39 @@ export class UploadS3Provider implements UploadProvider {
                                 ContentType: file.mimetype,
                             }),
                         );
-                        await cleanupFile(file.path);
                     } else {
                         throw new UploadexError('UNKNOWN', 'No valid file buffer or path');
                     }
-    
+
                     return {
                         fileName: file.originalname,
+                        storedName: key,
                         filePath: this.getS3Url(key),
                         mimeType: file.mimetype,
                         size: file.size,
                     };
-                } catch (error) {
-                    if (file?.path) await cleanupFile(file.path);
-                    throw error instanceof UploadexError
-                        ? error
-                        : new UploadexError('UNKNOWN', `S3 upload failed: ${error.message}`, { cause: error });
-                }
+                };
+
+                const result = await safeUpload(task, {
+                    timeoutMs: this.timeoutMs,
+                    retries: this.retries,
+                    onCleanup: async () => {
+                        if (file.path) await cleanupFile(file.path);
+                    },
+                });
+
+                if (file.path) await cleanupFile(file.path);
+                uploaded.push(result);
             });
-    
-            return await Promise.all(uploadTasks);
+
+            await Promise.all(uploadTasks);
+            return uploaded;
         } catch (error) {
-            await Promise.all(files.map(f => cleanupFile(f.path)));
+            await Promise.all(files.filter((f) => f?.path).map((f) => cleanupFile(f.path)));
+
             throw error instanceof UploadexError
-                ? error
-                : new UploadexError('UNKNOWN', `Multiple S3 upload failed: ${error.message}`, { cause: error });
+            ? error
+            : new UploadexError('UNKNOWN', `Multiple S3 upload failed: ${error.message}`, { cause: error });
         }
     }
     

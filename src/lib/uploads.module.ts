@@ -8,6 +8,7 @@ import { UploadOptionsToken } from './strategies/upload-options.token';
 import { ConfigModule } from '@nestjs/config';
 import { UploadCoreModule } from './upload-core.module';
 import { UploadS3Provider } from './providers/upload-s3.provider';
+import { UploadAzureProvider } from './providers/upload-azure.provider';
 
 @Module({})
 export class UploadsModule {
@@ -26,6 +27,7 @@ export class UploadsModule {
                 UploadLocalProvider,
                 UploadCloudinaryProvider,
                 UploadS3Provider,
+                UploadAzureProvider,
                 {
                     provide: UploadStrategyToken,
                     useFactory: (
@@ -33,18 +35,21 @@ export class UploadsModule {
                     local: UploadLocalProvider,
                     cloud: UploadCloudinaryProvider,
                     s3: UploadS3Provider,
+                    azure: UploadAzureProvider,
                     ) => {
                     switch (opts.provider) {
                         case 'cloudinary':
                         return cloud;
                         case 's3':
                         return s3;
+                        case 'azure':
+                        return azure;
                         case 'local':
                         default:
                         return local;
                     }
                     },
-                    inject: [UploadOptionsToken, UploadLocalProvider, UploadCloudinaryProvider, UploadS3Provider],
+                    inject: [UploadOptionsToken, UploadLocalProvider, UploadCloudinaryProvider, UploadS3Provider, UploadAzureProvider],
                 },
                 UploadsService,
             ],
