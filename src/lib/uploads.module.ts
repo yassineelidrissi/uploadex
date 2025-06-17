@@ -9,13 +9,23 @@ import { ConfigModule } from '@nestjs/config';
 import { UploadCoreModule } from './upload-core.module';
 import { UploadS3Provider } from './providers/upload-s3.provider';
 import { UploadAzureProvider } from './providers/upload-azure.provider';
+import { UploadGCSProvider } from './providers/upload-gcs.provider';
+import { validateUploadConfig } from './helpers/validate-config.helper';
+import { UploadConfigStorage } from './utils/upload-config.storage';
 
 @Module({})
 export class UploadsModule {
   static registerAsync<T extends UploadProviderType>(options: {
     useFactory: () => UploadModuleOptions<T> | Promise<UploadModuleOptions<T>>;
   }): DynamicModule {
-        const coreModule = UploadCoreModule.registerAsync(options);    
+        const factory = async () => {
+            const resolved = await options.useFactory();
+            validateUploadConfig(resolved);
+            UploadConfigStorage.set(resolved);
+            return resolved;
+        };
+         
+        const coreModule = UploadCoreModule.registerAsync({ useFactory: factory });
 
         return {
             module: UploadsModule,
@@ -28,6 +38,7 @@ export class UploadsModule {
                 UploadCloudinaryProvider,
                 UploadS3Provider,
                 UploadAzureProvider,
+                UploadGCSProvider,
                 {
                     provide: UploadStrategyToken,
                     useFactory: (
@@ -36,6 +47,7 @@ export class UploadsModule {
                     cloud: UploadCloudinaryProvider,
                     s3: UploadS3Provider,
                     azure: UploadAzureProvider,
+                    gcs: UploadGCSProvider
                     ) => {
                     switch (opts.provider) {
                         case 'cloudinary':
@@ -44,12 +56,14 @@ export class UploadsModule {
                         return s3;
                         case 'azure':
                         return azure;
+                        case 'gcs':
+                        return gcs;
                         case 'local':
                         default:
                         return local;
                     }
                     },
-                    inject: [UploadOptionsToken, UploadLocalProvider, UploadCloudinaryProvider, UploadS3Provider, UploadAzureProvider],
+                    inject: [UploadOptionsToken, UploadLocalProvider, UploadCloudinaryProvider, UploadS3Provider, UploadAzureProvider, UploadGCSProvider],
                 },
                 UploadsService,
             ],
