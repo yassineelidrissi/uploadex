@@ -49,6 +49,32 @@ export function validateUploadConfig<T extends UploadProviderType>(
             break;
         }
 
+        case 'gcs': {
+            const config = options.config as UploadProviderConfig<'gcs'>;
+            
+            if (!config.bucket || !config.projectId) {
+                throw new UploadexError(
+                    'CONFIGURATION_ERROR',
+                    'Missing GCS bucket or projectId.'
+                );
+            }
+            
+            const isEmulator = !!config.endpoint;
+            
+            if (!isEmulator && !config.keyFilename) {
+                throw new UploadexError(
+                    'CONFIGURATION_ERROR',
+                    'Missing GCS credentials: provide either keyFilename or use emulator with endpoint.'
+                );
+            }
+            
+            if (isEmulator && config.keyFilename) {
+                console.warn('[Uploadex] Warning: GCS is running in emulator mode. keyFilename will be ignored.');
+            }
+            
+            break;
+        }
+
         default:
             throw new UploadexError('PROVIDER_NOT_IMPLEMENTED', `Unknown provider: ${options.provider}`);
     }
