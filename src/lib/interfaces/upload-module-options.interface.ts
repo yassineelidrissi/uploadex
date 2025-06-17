@@ -1,4 +1,4 @@
-export type UploadProviderType = 'local' | 'cloudinary' | 's3' | 'azure';
+export type UploadProviderType = 'local' | 'cloudinary' | 's3' | 'azure' | 'gcs';
 
 export type UploadProviderConfig<T extends UploadProviderType> =
     T extends 'local'
@@ -9,6 +9,8 @@ export type UploadProviderConfig<T extends UploadProviderType> =
     ? { bucket: string; accessKeyId: string; secretAccessKey: string, region: string, endpoint?: string }
     : T extends 'azure'
     ? { accountName: string; accountKey: string; containerName: string, endpoint?: string}
+    : T extends 'gcs'
+    ? { bucket: string; projectId: string; keyFilename?: string; endpoint?: string }
     : never;
 
 export interface UploadModuleOptions<T extends UploadProviderType = UploadProviderType> {
