@@ -5,7 +5,7 @@ import { UploadModuleOptions } from '../interfaces/upload-module-options.interfa
 
 export function resolveMulterStorage(config: UploadModuleOptions): StorageEngine {
     const provider = config.provider;
-    const isCloud = ['cloudinary', 's3', 'azure'].includes(provider);
+    const isCloud = ['cloudinary', 's3', 'azure', 'gcs'].includes(provider);
 
     const getOrCreatePath = (path: string) => {
         if (!fs.existsSync(path)) {
@@ -34,4 +34,3 @@ export function resolveMulterStorage(config: UploadModuleOptions): StorageEngine
         },
     });
 }
-

@@ -10,21 +10,7 @@ export class UploadConfigStorage {
 
     static get(): UploadModuleOptions {
         if (!this.config) {
-            console.warn('[uploadex] config not ready yet. Returning temp config.');
-            return {
-                provider: 'local',
-                config: { uploadPath: './uploads' },
-                maxFileSize: 5 * 1024 * 1024,
-                maxFiles: 10,
-                allowedMimeTypes: [
-                    'image/jpeg',
-                    'image/png',
-                    'application/pdf',
-                    'text/csv',
-                ],
-                allowedExtensions: ['.jpg', '.jpeg', '.png', '.pdf', '.csv'],
-                debug: false,
-            };
+          throw new Error('[uploadex] Config not set. Make sure UploadModule is initialized correctly.');
         }
         return this.config;
     }
