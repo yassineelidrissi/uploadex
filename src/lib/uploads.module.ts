@@ -16,22 +16,25 @@ import { UploadConfigStorage } from './utils/upload-config.storage';
 @Module({})
 export class UploadsModule {
   static registerAsync<T extends UploadProviderType>(options: {
-    useFactory: () => UploadModuleOptions<T> | Promise<UploadModuleOptions<T>>;
+    useFactory: (...args: any[]) => UploadModuleOptions<T> | Promise<UploadModuleOptions<T>>;
+    inject?: any[];
+    imports?: any[];
   }): DynamicModule {
-        const factory = async () => {
-            const resolved = await options.useFactory();
+        const factory = async (...args: any[]) => {
+            const resolved = await options.useFactory(...args);
             validateUploadConfig(resolved);
             UploadConfigStorage.set(resolved);
             return resolved;
         };
          
-        const coreModule = UploadCoreModule.registerAsync({ useFactory: factory });
+        const coreModule = UploadCoreModule.registerAsync({ useFactory: factory, inject: options.inject ?? [], imports: options.imports ?? [] });
 
         return {
             module: UploadsModule,
             imports: [
                 ConfigModule,
                 coreModule,
+                ...(options.imports ?? [])
             ],
             providers: [
                 UploadLocalProvider,

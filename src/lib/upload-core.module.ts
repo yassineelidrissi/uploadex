@@ -5,18 +5,19 @@ import { UploadOptionsToken } from './strategies/upload-options.token';
 @Module({})
 export class UploadCoreModule {
     static registerAsync<T extends UploadProviderType>(options: {
-        useFactory: () => UploadModuleOptions<T> | Promise<UploadModuleOptions<T>>;
+        useFactory: (...args: any[]) => UploadModuleOptions<T> | Promise<UploadModuleOptions<T>>;
+        imports?: any[];
+        inject?: any[];
     }): DynamicModule {
         return {
             module: UploadCoreModule,
+            imports: options.imports ?? [],
             providers: [
             {
                 provide: UploadOptionsToken,
-                useFactory: async () => {
-                    const resolved = await options.useFactory();;
-                    return resolved;
-                },
-                },
+                useFactory: options.useFactory,
+                inject: options.inject ?? [],
+            },
             ],
             exports: [UploadOptionsToken],
         };
