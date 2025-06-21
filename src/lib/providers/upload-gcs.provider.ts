@@ -9,6 +9,8 @@ import { UploadedFileMeta } from '../interfaces/uploaded-file-meta.interface';
 import { generateSafeFilename } from '../helpers/filename.helper';
 import { validateFile, validateFiles, cleanupFile } from '../helpers/upload-validation.helper';
 import { safeUpload } from '../helpers/safe-upload.helper';
+import { shouldUseBuffer } from '../helpers/buffer-hydration.helper';
+import { configureUploadexLogger, uploadexLogger } from '../utils/uploadex.logger';
 
 @Injectable()
 export class UploadGCSProvider implements UploadProvider {
@@ -24,6 +26,10 @@ export class UploadGCSProvider implements UploadProvider {
         @Inject(UploadOptionsToken)
         private readonly options: UploadModuleOptions<'gcs'>
     ) {
+        if (options.provider !== 'gcs') return;
+
+        configureUploadexLogger(options.debug ?? false);
+
         const config = options.config;
         this.bucketName = config.bucket;
         this.endpoint = config.endpoint;
@@ -47,6 +53,7 @@ export class UploadGCSProvider implements UploadProvider {
             try {
                 await bucket.create();
                 console.log('[GCS] Bucket created:', this.bucketName);
+                uploadexLogger.debug(`[GCS] Bucket created: "${this.bucketName}"`, 'GCSProvider');
             } catch (error) {
                 console.error('[GCS] Failed to create bucket:', error);
                 throw new UploadexError('UNKNOWN', 'Bucket creation failed', { cause: error });
@@ -86,16 +93,26 @@ export class UploadGCSProvider implements UploadProvider {
     private async uploadFile(file: Express.Multer.File, key: string, contentType: string): Promise<void> {
         const bucket = await this.getBucket();
         const blob = bucket.file(key);
+        const useBuffer = await shouldUseBuffer(file, this.maxSafeMemorySize);
 
-        if (file.size <= this.maxSafeMemorySize && file.buffer) {
+        uploadexLogger.debug(`Uploading "${file.originalname}" using ${useBuffer ? 'buffer' : 'stream'}...`, 'GCSProvider');
+
+        if (useBuffer && file.buffer) {
             await blob.save(file.buffer, { contentType });
+            uploadexLogger.debug(`Upload successful (buffer): ${key}`, 'GCSProvider');
         } else if (file.path) {
             const stream = fs.createReadStream(file.path);
             await new Promise((resolve, reject) => {
             stream
                 .pipe(blob.createWriteStream({ contentType }))
-                .on('finish', resolve)
-                .on('error', error => reject(new UploadexError('UNKNOWN', 'Stream write failed', { cause: error })));
+                .on('finish', () => {
+                    uploadexLogger.debug(`Upload successful (stream): ${key}`, 'GCSProvider');
+                    resolve(undefined);
+                })
+                .on('error', (error) => {
+                    uploadexLogger.error(`Stream upload failed: ${error.message}`, undefined, 'GCSProvider');
+                    reject(new UploadexError('UNKNOWN', 'Stream write failed', { cause: error }));
+                });
             });
         } else {
             throw new UploadexError('UNKNOWN', 'No valid file buffer or path');
@@ -138,6 +155,7 @@ export class UploadGCSProvider implements UploadProvider {
 
         } catch (error) {
             if (file?.path) await cleanupFile(file.path);
+            uploadexLogger.error(`Single file upload failed: ${error.message}`, undefined, 'GCSProvider');
             throw error instanceof UploadexError
             ? error
             : new UploadexError('UNKNOWN', `GCS single upload failed: ${error.message}`, { cause: error });
@@ -187,6 +205,7 @@ export class UploadGCSProvider implements UploadProvider {
             return uploaded;
         } catch (error) {
             await Promise.all(files.filter(f => f?.path).map(f => cleanupFile(f.path)));
+            uploadexLogger.error(`Multiple file upload failed: ${error.message}`, undefined, 'GCSProvider');
             throw error instanceof UploadexError
             ? error
             : new UploadexError('UNKNOWN', `Multiple GCS upload failed: ${error.message}`, { cause: error });
