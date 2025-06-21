@@ -9,6 +9,8 @@ import { UploadexError } from '../errors/uploadex-error';
 import { safeUpload } from '../helpers/safe-upload.helper';
 import { UploadedFileMeta } from '../interfaces/uploaded-file-meta.interface';
 import { generateSafeFilename } from '../helpers/filename.helper';
+import { shouldUseBuffer } from '../helpers/buffer-hydration.helper';
+import { configureUploadexLogger, uploadexLogger } from '../utils/uploadex.logger';
 
 @Injectable()
 export class UploadS3Provider implements UploadProvider {
@@ -24,6 +26,8 @@ export class UploadS3Provider implements UploadProvider {
         private readonly options: UploadModuleOptions<'s3'>,
     ) {
         if (options.provider !== 's3') return;
+
+        configureUploadexLogger(options.debug ?? false);
 
         const config = this.options.config;
         this.bucket = config.bucket;
@@ -90,7 +94,11 @@ export class UploadS3Provider implements UploadProvider {
         const key = generateSafeFilename(file.originalname, 's3');
 
         const task = async () => {
-            if (file.size <= this.maxSafeMemorySize && file.buffer) {
+            const useBuffer = await shouldUseBuffer(file, this.maxSafeMemorySize);
+
+            uploadexLogger.debug(`Uploading "${file.originalname}" using ${useBuffer ? 'buffer' : 'stream'}...`, 'S3Provider');
+
+            if (useBuffer && file.buffer) {
                 await this.s3.send(
                     new PutObjectCommand({
                         Bucket: this.bucket,
@@ -100,7 +108,8 @@ export class UploadS3Provider implements UploadProvider {
                     }),
                 );
             } else if (file.path) {
-            const fileStream = fs.createReadStream(file.path);
+                const fileStream = fs.createReadStream(file.path);
+
                 await this.s3.send(
                     new PutObjectCommand({
                         Bucket: this.bucket,
@@ -109,9 +118,12 @@ export class UploadS3Provider implements UploadProvider {
                         ContentType: file.mimetype,
                     }),
                 );
+
             } else {
                 throw new UploadexError('UNKNOWN', 'No valid file buffer or path');
             }
+
+            uploadexLogger.debug(`Upload successful: ${key}`, 'S3Provider');
 
             return {
                 fileName: file.originalname,
@@ -134,6 +146,7 @@ export class UploadS3Provider implements UploadProvider {
             if (file.path) await cleanupFile(file.path);
             return result;
         } catch (error) {
+            uploadexLogger.error(`Single file upload failed: ${error.message}`, undefined, 'S3Provider');
             throw error instanceof UploadexError
             ? error
             : new UploadexError('UNKNOWN', `S3 upload failed: ${error.message}`, { cause: error });
@@ -157,7 +170,11 @@ export class UploadS3Provider implements UploadProvider {
                 const key = generateSafeFilename(file.originalname, 's3');
 
                 const task = async () => {
-                    if (file.size <= this.maxSafeMemorySize && file.buffer) {
+                    const useBuffer = await shouldUseBuffer(file, this.maxSafeMemorySize);
+
+                    uploadexLogger.debug(`Uploading "${file.originalname}" using ${useBuffer ? 'buffer' : 'stream'}...`, 'S3Provider');
+
+                    if (useBuffer && file.buffer) {
                         await this.s3.send(
                             new PutObjectCommand({
                                 Bucket: this.bucket,
@@ -167,7 +184,7 @@ export class UploadS3Provider implements UploadProvider {
                             }),
                         );
                     } else if (file.path) {
-                    const fileStream = fs.createReadStream(file.path);
+                        const fileStream = fs.createReadStream(file.path);
                         await this.s3.send(
                             new PutObjectCommand({
                                 Bucket: this.bucket,
@@ -179,6 +196,8 @@ export class UploadS3Provider implements UploadProvider {
                     } else {
                         throw new UploadexError('UNKNOWN', 'No valid file buffer or path');
                     }
+
+                    uploadexLogger.debug(`Upload successful: ${key}`, 'S3Provider');
 
                     return {
                         fileName: file.originalname,
@@ -204,6 +223,7 @@ export class UploadS3Provider implements UploadProvider {
             await Promise.all(uploadTasks);
             return uploaded;
         } catch (error) {
+            uploadexLogger.error(`Multiple file upload failed: ${error.message}`, undefined, 'S3Provider');
             await Promise.all(files.filter((f) => f?.path).map((f) => cleanupFile(f.path)));
 
             throw error instanceof UploadexError
