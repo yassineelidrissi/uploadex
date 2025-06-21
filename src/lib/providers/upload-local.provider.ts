@@ -4,12 +4,14 @@ import { UploadProvider } from '../interfaces/upload-provider.interface';
 import { UploadModuleOptions } from '../interfaces/upload-module-options.interface';
 import { UploadOptionsToken } from '../strategies/upload-options.token';
 import { UploadexError } from '../errors/uploadex-error';
-import { resolve } from 'path';
+import { basename, resolve } from 'path';
 import * as fs from 'fs';
 import { UploadedFileMeta } from '../interfaces/uploaded-file-meta.interface';
 import { safeUpload } from '../helpers/safe-upload.helper';
 import { pipeline } from 'stream/promises';
 import { generateSafeFilename } from '../helpers/filename.helper';
+import { shouldUseBuffer } from '../helpers/buffer-hydration.helper';
+import { configureUploadexLogger, uploadexLogger } from '../utils/uploadex.logger';
 
 @Injectable()
 export class UploadLocalProvider implements UploadProvider {
@@ -22,6 +24,9 @@ export class UploadLocalProvider implements UploadProvider {
         @Inject(UploadOptionsToken)
         private readonly options: UploadModuleOptions<'local'>,
     ) {
+
+        configureUploadexLogger(options.debug ?? false);
+
         this.maxSafeMemorySize = this.options.maxSafeMemorySize ?? 10 * 1024 * 1024;
         this.timeoutMs = this.options.uploadTimeoutMs;
         this.retries = this.options.uploadRetries;
@@ -33,8 +38,12 @@ export class UploadLocalProvider implements UploadProvider {
 
     private async streamToLocal(file: Express.Multer.File, outputPath: string): Promise<UploadedFileMeta> {
         const writeStream = fs.createWriteStream(outputPath);
-    
-        if (!file.path && file.buffer) {
+        
+        const useBuffer = await shouldUseBuffer(file, this.maxSafeMemorySize);
+
+        uploadexLogger.debug(`Uploading "${file.originalname}" using ${useBuffer ? 'buffer' : 'stream'}...`, 'LocalProvider');
+
+        if (useBuffer && file.buffer) {
             await fs.promises.writeFile(outputPath, file.buffer);
         } else if (file.path) {
             const readStream = fs.createReadStream(file.path);
@@ -42,6 +51,8 @@ export class UploadLocalProvider implements UploadProvider {
         } else {
             throw new UploadexError('UNKNOWN', 'No valid buffer or path to stream');
         }
+
+        uploadexLogger.debug(`Upload successful: ${basename(outputPath)}`, 'LocalProvider');
     
         return {
             fileName: file.originalname,
@@ -65,8 +76,6 @@ export class UploadLocalProvider implements UploadProvider {
 
             const outputPath = resolve(this.uploadPath, generateSafeFilename(file.originalname, 'local'));
 
-            // const sanitizedName = sanitizeOriginalName(file.originalname);
-
             const result = await safeUpload(() => this.streamToLocal(file, outputPath), {
                 timeoutMs: this.timeoutMs,
                 retries: this.retries,
@@ -79,6 +88,7 @@ export class UploadLocalProvider implements UploadProvider {
 
             return result;
         } catch (error) {
+            uploadexLogger.error(`Single file upload failed: ${error.message}`, undefined, 'LocalProvider');
             throw error instanceof UploadexError
             ? error
             : new UploadexError('UNKNOWN', 'Unexpected error in local upload provider', { cause: error });
@@ -102,8 +112,6 @@ export class UploadLocalProvider implements UploadProvider {
             const tasks = files.map(async (file) => {
                 const outputPath = resolve(this.uploadPath, generateSafeFilename(file.originalname, 'local'));
 
-                // const sanitizedName = sanitizeOriginalName(file.originalname);
-
                 const result = await safeUpload(() => this.streamToLocal(file, outputPath), {
                     timeoutMs: this.timeoutMs,
                     retries: this.retries,
@@ -122,7 +130,7 @@ export class UploadLocalProvider implements UploadProvider {
             await Promise.all(
                 files.filter((f) => f?.path).map((f) => cleanupFile(f.path)),
             );
-
+            uploadexLogger.error(`Multiple file upload failed: ${error.message}`, undefined, 'LocalProvider');
             throw error instanceof UploadexError
             ? error
             : new UploadexError('UNKNOWN', 'Unexpected error in local upload provider', { cause: error });
