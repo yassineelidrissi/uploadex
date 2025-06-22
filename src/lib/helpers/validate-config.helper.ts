@@ -52,10 +52,10 @@ export function validateUploadConfig<T extends UploadProviderType>(
         case 'gcs': {
             const config = options.config as UploadProviderConfig<'gcs'>;
             
-            if (!config.bucket || !config.projectId) {
+            if (!config.bucket) {
                 throw new UploadexError(
                     'CONFIGURATION_ERROR',
-                    'Missing GCS bucket or projectId.'
+                    'Missing GCS bucket name.'
                 );
             }
             
