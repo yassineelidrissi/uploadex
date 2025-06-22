@@ -1,6 +1,4 @@
 import { Module } from '@nestjs/common';
-import { AppController } from './app.controller';
-import { AppService } from './app.service';
 import { UploadsModule } from './lib/uploads.module';
 import { ConfigModule } from '@nestjs/config';
 import uploadConfig from './lib/config/upload.config';
@@ -15,7 +13,5 @@ const ENV = process.env.NODE_ENV;
     load: [uploadConfig],
     validationSchema: environmentsValidation,
   })],
-  controllers: [AppController],
-  providers: [AppService],
 })
 export class AppModule {}
