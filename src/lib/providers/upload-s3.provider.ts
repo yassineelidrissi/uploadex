@@ -20,6 +20,7 @@ export class UploadS3Provider implements UploadProvider {
     private readonly maxSafeMemorySize: number;
     private readonly timeoutMs?: number;
     private readonly retries?: number;
+    private readonly checkBucket?: boolean;
 
     constructor(
         @Inject(UploadOptionsToken)
@@ -35,6 +36,7 @@ export class UploadS3Provider implements UploadProvider {
         this.maxSafeMemorySize = this.options.maxSafeMemorySize ?? 10 * 1024 * 1024;
         this.timeoutMs = this.options.uploadTimeoutMs;
         this.retries = this.options.uploadRetries;
+        this.checkBucket = config.checkBucket ?? false;
 
         if (!config.region || !config.bucket || !config.accessKeyId || !config.secretAccessKey) {
             throw new UploadexError(
@@ -58,18 +60,29 @@ export class UploadS3Provider implements UploadProvider {
         });
 
         // If using LocalStack, auto create bucket
-        if (config.endpoint) {
-            this.s3.send(new HeadBucketCommand({ Bucket: this.bucket })).catch(() => {
-                return this.s3.send(
-                    new CreateBucketCommand({
-                        Bucket: this.bucket,
-                        ...(this.region !== 'us-east-1' && {
-                            CreateBucketConfiguration: {
-                                LocationConstraint: this.region as BucketLocationConstraint,
-                            },
-                        }),
-                    }),
-                );
+        if (this.checkBucket) {
+            this.s3.send(new HeadBucketCommand({ Bucket: this.bucket }))
+            .then(() => {
+                uploadexLogger.debug(`[S3] Bucket "${this.bucket}" exists`, 'S3Provider');
+            })
+            .catch(async (err) => {
+                uploadexLogger.warn(`[S3] Bucket "${this.bucket}" not found, creating...`, 'S3Provider');
+                try {
+                    await this.s3.send(
+                        new CreateBucketCommand({
+                            Bucket: this.bucket,
+                            ...(this.region !== 'us-east-1' && {
+                                CreateBucketConfiguration: {
+                                    LocationConstraint: this.region as BucketLocationConstraint,
+                                },
+                            }),
+                        })
+                    );
+                    uploadexLogger.debug(`[S3] Bucket created: "${this.bucket}"`, 'S3Provider');
+                } catch (createErr) {
+                    uploadexLogger.error(`[S3] Failed to create bucket "${this.bucket}": ${createErr.message}`, undefined, 'S3Provider');
+                    throw new UploadexError('CONFIGURATION_ERROR', `S3 bucket check or creation failed`, { cause: createErr });
+                }
             });
         }
 
