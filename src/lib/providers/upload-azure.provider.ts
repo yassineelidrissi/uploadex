@@ -29,6 +29,7 @@ export class UploadAzureProvider implements UploadProvider {
     private readonly maxSafeMemorySize: number;
     private readonly timeoutMs?: number;
     private readonly retries?: number;
+    private readonly checkContainer?: boolean;
 
     constructor(
         @Inject(UploadOptionsToken)
@@ -59,13 +60,33 @@ export class UploadAzureProvider implements UploadProvider {
         this.maxSafeMemorySize = options.maxSafeMemorySize ?? 10 * 1024 * 1024;
         this.timeoutMs = options.uploadTimeoutMs;
         this.retries = options.uploadRetries;
+        this.checkContainer = options.config.checkContainer ?? false;
     }
 
     private async getContainerClient() {
         const containerClient = this.client.getContainerClient(this.containerName);
-        if (!(await containerClient.exists())) {
-            await containerClient.create();
+
+        if (this.checkContainer) {
+            try {
+                const exists = await containerClient.exists();
+
+                if (exists) {
+                    uploadexLogger.debug(`[Azure] Container "${this.containerName}" exists`, 'AzureProvider');
+                } else {
+                    uploadexLogger.warn(`[Azure] Container "${this.containerName}" not found, creating...`, 'AzureProvider');
+                    await containerClient.create();
+                    uploadexLogger.debug(`[Azure] Container created: "${this.containerName}"`, 'AzureProvider');
+                }
+            } catch (error) {
+                uploadexLogger.error(
+                    `[Azure] Failed to check or create container "${this.containerName}": ${error.message}`,
+                    undefined,
+                    'AzureProvider'
+                );
+                throw new UploadexError('CONFIGURATION_ERROR', `Azure container check or creation failed`, { cause: error });
+            }
         }
+
         return containerClient;
     }
 
