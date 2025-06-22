@@ -21,6 +21,7 @@ export class UploadGCSProvider implements UploadProvider {
     private readonly maxSafeMemorySize: number;
     private readonly timeoutMs?: number;
     private readonly retries?: number;
+    private readonly checkBucket?: boolean;
 
     constructor(
         @Inject(UploadOptionsToken)
@@ -37,9 +38,10 @@ export class UploadGCSProvider implements UploadProvider {
         this.maxSafeMemorySize = options.maxSafeMemorySize ?? 10 * 1024 * 1024;
         this.timeoutMs = options.uploadTimeoutMs;
         this.retries = options.uploadRetries;
+        this.checkBucket = config.checkBucket ?? false;
 
         this.storage = new Storage({
-            projectId: config.projectId,
+            ...(config.projectId ? { projectId: config.projectId } : {}),
             ...(config.keyFilename ? { keyFilename: config.keyFilename } : {}),
             ...(config.endpoint ? { apiEndpoint: config.endpoint } : {}),
         });
@@ -47,16 +49,23 @@ export class UploadGCSProvider implements UploadProvider {
 
     private async getBucket() {
         const bucket = this.storage.bucket(this.bucketName);
-        const [exists] = await bucket.exists();
 
-        if (!exists && this.emulatorMode) {
+        if (this.checkBucket) {
             try {
-                await bucket.create();
-                console.log('[GCS] Bucket created:', this.bucketName);
-                uploadexLogger.debug(`[GCS] Bucket created: "${this.bucketName}"`, 'GCSProvider');
+                const [exists] = await bucket.exists();
+
+                if (exists) {
+                    uploadexLogger.debug(`[GCS] Bucket "${this.bucketName}" exists`, 'GCSProvider');
+                } else if (this.checkBucket) {
+                    uploadexLogger.warn(`[GCS] Bucket "${this.bucketName}" not found in emulator, creating...`, 'GCSProvider');
+                    await bucket.create();
+                    uploadexLogger.debug(`[GCS] Bucket created: "${this.bucketName}"`, 'GCSProvider');
+                } else {
+                    uploadexLogger.warn(`[GCS] Bucket "${this.bucketName}" does not exist and was not created.`, 'GCSProvider');
+                }
             } catch (error) {
-                console.error('[GCS] Failed to create bucket:', error);
-                throw new UploadexError('UNKNOWN', 'Bucket creation failed', { cause: error });
+                uploadexLogger.error(`[GCS] Failed to check or create bucket "${this.bucketName}": ${error.message}`, undefined, 'GCSProvider');
+                throw new UploadexError('CONFIGURATION_ERROR', 'Bucket check or creation failed', { cause: error });
             }
         }
 
