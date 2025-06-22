@@ -16,6 +16,8 @@ import { safeUpload } from '../helpers/safe-upload.helper';
 import { UploadedFileMeta } from '../interfaces/uploaded-file-meta.interface';
 import { generateSafeFilename } from '../helpers/filename.helper';
 import { cleanupFile } from '../helpers/upload-validation.helper';
+import { shouldUseBuffer } from '../helpers/buffer-hydration.helper';
+import { configureUploadexLogger, uploadexLogger } from '../utils/uploadex.logger';
 
 @Injectable()
 export class UploadAzureProvider implements UploadProvider {
@@ -27,12 +29,15 @@ export class UploadAzureProvider implements UploadProvider {
     private readonly maxSafeMemorySize: number;
     private readonly timeoutMs?: number;
     private readonly retries?: number;
+    private readonly checkContainer?: boolean;
 
     constructor(
         @Inject(UploadOptionsToken)
         private readonly options: UploadModuleOptions<'azure'>
     ) {
         if (options.provider !== 'azure') return;
+
+        configureUploadexLogger(options.debug ?? false);
 
         const { accountName, accountKey, containerName, endpoint } = options.config;
 
@@ -55,13 +60,33 @@ export class UploadAzureProvider implements UploadProvider {
         this.maxSafeMemorySize = options.maxSafeMemorySize ?? 10 * 1024 * 1024;
         this.timeoutMs = options.uploadTimeoutMs;
         this.retries = options.uploadRetries;
+        this.checkContainer = options.config.checkContainer ?? false;
     }
 
     private async getContainerClient() {
         const containerClient = this.client.getContainerClient(this.containerName);
-        if (!(await containerClient.exists())) {
-            await containerClient.create();
+
+        if (this.checkContainer) {
+            try {
+                const exists = await containerClient.exists();
+
+                if (exists) {
+                    uploadexLogger.debug(`[Azure] Container "${this.containerName}" exists`, 'AzureProvider');
+                } else {
+                    uploadexLogger.warn(`[Azure] Container "${this.containerName}" not found, creating...`, 'AzureProvider');
+                    await containerClient.create();
+                    uploadexLogger.debug(`[Azure] Container created: "${this.containerName}"`, 'AzureProvider');
+                }
+            } catch (error) {
+                uploadexLogger.error(
+                    `[Azure] Failed to check or create container "${this.containerName}": ${error.message}`,
+                    undefined,
+                    'AzureProvider'
+                );
+                throw new UploadexError('CONFIGURATION_ERROR', `Azure container check or creation failed`, { cause: error });
+            }
         }
+
         return containerClient;
     }
 
@@ -103,7 +128,11 @@ export class UploadAzureProvider implements UploadProvider {
         const blobClient = container.getBlockBlobClient(key);
 
         const task = async () => {
-            if (file.size <= this.maxSafeMemorySize && file.buffer) {
+            const useBuffer = await shouldUseBuffer(file, this.maxSafeMemorySize);
+
+            uploadexLogger.debug(`Uploading "${file.originalname}" using ${useBuffer ? 'buffer' : 'stream'}...`, 'AzureProvider');
+
+            if (useBuffer && file.buffer) {
                 await blobClient.uploadData(file.buffer, {
                     blobHTTPHeaders: { blobContentType: file.mimetype },
                 });
@@ -115,6 +144,8 @@ export class UploadAzureProvider implements UploadProvider {
             } else {
                 throw new UploadexError('UNKNOWN', 'No valid file buffer or path');
             }
+
+            uploadexLogger.debug(`Upload successful: ${key}`, 'AzureProvider');
 
             return {
                 fileName: file.originalname,
@@ -135,8 +166,9 @@ export class UploadAzureProvider implements UploadProvider {
             });
 
             if (file.path) await cleanupFile(file.path);
-                return result;
+            return result;
         } catch (error) {
+            uploadexLogger.error(`Single file upload failed: ${error.message}`, undefined, 'AzureProvider');
             throw error instanceof UploadexError
             ? error
             : new UploadexError('UNKNOWN', `Azure upload failed: ${error.message}`, { cause: error });
@@ -161,7 +193,11 @@ export class UploadAzureProvider implements UploadProvider {
             const blobClient = container.getBlockBlobClient(key);
 
             const task = async () => {
-                if (file.size <= this.maxSafeMemorySize && file.buffer) {
+                const useBuffer = await shouldUseBuffer(file, this.maxSafeMemorySize);
+
+                uploadexLogger.debug(`Uploading "${file.originalname}" using ${useBuffer ? 'buffer' : 'stream'}...`, 'AzureProvider');
+
+                if (useBuffer && file.buffer) {
                     await blobClient.uploadData(file.buffer, {
                         blobHTTPHeaders: { blobContentType: file.mimetype },
                     });
@@ -173,6 +209,8 @@ export class UploadAzureProvider implements UploadProvider {
                 } else {
                     throw new UploadexError('UNKNOWN', 'No valid file buffer or path');
                 }
+
+                uploadexLogger.debug(`Upload successful: ${key}`, 'AzureProvider');
 
                 return {
                     fileName: file.originalname,
@@ -200,7 +238,8 @@ export class UploadAzureProvider implements UploadProvider {
             return uploaded;
         } catch (error) {
             await Promise.all(files.filter((f) => f?.path).map((f) => cleanupFile(f.path)));
-                throw error instanceof UploadexError
+            uploadexLogger.error(`Multiple file upload failed: ${error.message}`, undefined, 'AzureProvider');
+            throw error instanceof UploadexError
                 ? error
                 : new UploadexError('UNKNOWN', `Multiple Azure upload failed: ${error.message}`, { cause: error });
         }

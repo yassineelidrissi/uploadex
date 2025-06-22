@@ -11,6 +11,8 @@ import { safeUpload } from '../helpers/safe-upload.helper';
 import { UploadedFileMeta } from '../interfaces/uploaded-file-meta.interface';
 import { generateSafeFilename } from '../helpers/filename.helper';
 import { extname } from 'path';
+import { shouldUseBuffer } from '../helpers/buffer-hydration.helper';
+import { configureUploadexLogger, uploadexLogger } from '../utils/uploadex.logger';
 
 @Injectable()
 export class UploadCloudinaryProvider implements UploadProvider {
@@ -23,6 +25,8 @@ export class UploadCloudinaryProvider implements UploadProvider {
         private readonly options: UploadModuleOptions<'cloudinary'>
     ) {
         if (this.options.provider !== 'cloudinary') return;
+
+        configureUploadexLogger(options.debug ?? false);
 
         const cloudinaryConfig = this.options.config;
 
@@ -89,8 +93,12 @@ export class UploadCloudinaryProvider implements UploadProvider {
                 allowedMimeTypes: this.options.allowedMimeTypes,
             });
         
-            const task = () => {
-                if (file.size <= this.maxSafeMemorySize && file.buffer) {
+            const task = async () => {
+                const useBuffer = await shouldUseBuffer(file, this.maxSafeMemorySize);
+
+                uploadexLogger.debug(`Uploading "${file.originalname}" using ${useBuffer ? 'buffer' : 'stream'}...`, 'CloudinaryProvider');
+
+                if (useBuffer && file.buffer) {
                     return this.streamUploadBuffer(file.buffer);
                 } else if (file.path) {
                     return this.streamUploadFilePath(file, publicId);
@@ -108,6 +116,8 @@ export class UploadCloudinaryProvider implements UploadProvider {
             });
         
             if (file.path) await cleanupFile(file.path);
+
+            uploadexLogger.debug(`Upload successful: ${publicId}`, 'CloudinaryProvider');
         
             return {
                 fileName: file.originalname,
@@ -118,6 +128,7 @@ export class UploadCloudinaryProvider implements UploadProvider {
             };
         
         } catch (error) {
+            uploadexLogger.error(`Single file upload failed: ${error.message}`, undefined, 'CloudinaryProvider');
             throw error instanceof UploadexError
             ? error
             : new UploadexError('UNKNOWN', `Cloudinary upload failed: ${error.message}`, { cause: error });
@@ -141,8 +152,12 @@ export class UploadCloudinaryProvider implements UploadProvider {
             const uploadTasks = files.map(async (file) => {
                 const publicId = generateSafeFilename(file.originalname, 'cloud').replace(/\.[^/.]+$/, '');
 
-                const task = () => {
-                    if (file.size <= this.maxSafeMemorySize && file.buffer) {
+                const task = async () => {
+                    const useBuffer = await shouldUseBuffer(file, this.maxSafeMemorySize);
+
+                    uploadexLogger.debug(`Uploading "${file.originalname}" using ${useBuffer ? 'buffer' : 'stream'}...`, 'CloudinaryProvider');
+
+                    if (useBuffer && file.buffer) {
                         return this.streamUploadBuffer(file.buffer);
                     } else if (file.path) {
                         return this.streamUploadFilePath(file, publicId);
@@ -160,6 +175,8 @@ export class UploadCloudinaryProvider implements UploadProvider {
                 });
             
                 if (file.path) await cleanupFile(file.path);
+
+                uploadexLogger.debug(`Upload successful: ${publicId}`, 'CloudinaryProvider');
             
                 uploaded.push({
                     fileName: file.originalname,
@@ -176,7 +193,7 @@ export class UploadCloudinaryProvider implements UploadProvider {
             await Promise.all(
                 files.filter(f => f?.path).map(f => cleanupFile(f.path))
             );
-        
+            uploadexLogger.error(`Multiple file upload failed: ${error.message}`, undefined, 'CloudinaryProvider');
             throw error instanceof UploadexError
                 ? error
                 : new UploadexError('UNKNOWN', `Multiple Cloudinary upload failed: ${error.message}`, { cause: error });
