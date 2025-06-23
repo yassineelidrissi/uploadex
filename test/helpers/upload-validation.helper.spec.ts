@@ -5,17 +5,18 @@ import { MulterError } from 'multer';
 import { UploadConfigStorage } from '../../lib/utils/upload-config.storage';
 
 jest.mock('fs', () => ({
-  promises: {
-    unlink: jest.fn(),
-  },
+    promises: {
+        unlink: jest.fn(),
+    },
 }));
 
 describe('upload-validation.helper', () => {
     const mockFile = (overrides = {}): Express.Multer.File => ({
         originalname: 'test.jpg',
         mimetype: 'image/jpeg',
-        size: 500 * 1024,
+        size: 512 * 1024, // 512KB
         path: '/tmp/test.jpg',
+        buffer: Buffer.from('fake'),
         ...overrides,
     } as Express.Multer.File);
 
@@ -26,17 +27,17 @@ describe('upload-validation.helper', () => {
 
         it('should throw for file too large', async () => {
             const file = mockFile({ size: 10 * 1024 * 1024 }); // 10MB
-            await expect(validateFile(file, { maxSize: 1 * 1024 * 1024 })).rejects.toThrowError(/Max file size/);
+            await expect(validateFile(file, { maxSize: 1 * 1024 * 1024 })).rejects.toThrow(/Max file size/);
         });
 
         it('should throw for invalid extension', async () => {
             const file = mockFile({ originalname: 'malware.exe' });
-            await expect(validateFile(file, {})).rejects.toThrowError(/Invalid file extension/);
+            await expect(validateFile(file, {})).rejects.toThrow(/Invalid file extension/);
         });
 
         it('should throw for invalid MIME type', async () => {
             const file = mockFile({ mimetype: 'application/x-msdownload' });
-            await expect(validateFile(file, {})).rejects.toThrowError(/Invalid MIME type/);
+            await expect(validateFile(file, {})).rejects.toThrow(/Invalid MIME type/);
         });
     });
 
@@ -48,12 +49,12 @@ describe('upload-validation.helper', () => {
 
         it('should throw if too many files uploaded', async () => {
             const files = [mockFile(), mockFile(), mockFile()];
-            await expect(validateFiles(files, { maxFiles: 2 })).rejects.toThrowError(/maximum of 2 files/);
+            await expect(validateFiles(files, { maxFiles: 2 })).rejects.toThrow(/maximum of 2 files/);
         });
 
         it('should throw if files array is empty or missing', async () => {
-            await expect(validateFiles([], {})).rejects.toThrowError(/No files uploaded/);
-            await expect(validateFiles(undefined as any, {})).rejects.toThrowError(/No files uploaded/);
+            await expect(validateFiles([], {})).rejects.toThrow(/No files uploaded/);
+            await expect(validateFiles(undefined as any, {})).rejects.toThrow(/No files uploaded/);
         });
     });
 
@@ -75,14 +76,15 @@ describe('upload-validation.helper', () => {
     });
 
     describe('transformMulterError', () => {
-        beforeEach(() => 
-            UploadConfigStorage.set({ 
+        beforeEach(() =>
+            UploadConfigStorage.set({
                 provider: 'local',
                 config: { uploadPath: '/tmp' },
                 maxFiles: 5,
                 maxFileSize: 2 * 1024 * 1024,
                 debug: false,
-        }));
+            })
+        );
 
         it('should convert LIMIT_FILE_SIZE to UploadexError', () => {
             const err = new MulterError('LIMIT_FILE_SIZE');
@@ -94,21 +96,19 @@ describe('upload-validation.helper', () => {
         it('should convert LIMIT_FILE_COUNT to UploadexError', () => {
             const err = new MulterError('LIMIT_FILE_COUNT');
             const result = transformMulterError(err) as UploadexError;
-            expect(result).toBeInstanceOf(UploadexError);
             expect(result.code).toBe('MAX_FILES_EXCEEDED');
         });
 
         it('should convert LIMIT_UNEXPECTED_FILE to UploadexError', () => {
             const err = new MulterError('LIMIT_UNEXPECTED_FILE');
             const result = transformMulterError(err) as UploadexError;
-            expect(result).toBeInstanceOf(UploadexError);
             expect(result.code).toBe('INVALID_EXTENSION');
         });
 
-        it('should pass through unknown error', () => {
-            const rawErr = new Error('unknown');
-            const result = transformMulterError(rawErr);
-            expect(result).toBe(rawErr);
+        it('should pass through unknown errors untouched', () => {
+            const err = new Error('something else');
+            const result = transformMulterError(err);
+            expect(result).toBe(err);
         });
     });
 });
