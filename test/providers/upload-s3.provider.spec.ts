@@ -40,7 +40,7 @@ jest.mock('@aws-sdk/client-s3', () => {
 });
   
 
-describe('UploadS3Provider (Full)', () => {
+describe('UploadS3Provider', () => {
     let provider: UploadS3Provider;
 
     const options: UploadModuleOptions<'s3'> = {
