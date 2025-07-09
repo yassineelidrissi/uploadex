@@ -1,10 +1,10 @@
 {
   "name": "uploadex",
   "version": "1.0.0",
-  "description": "The file upload engine NestJS never had — stream-first, provider-agnostic, and production-grade. S3, GCS, Azure, Cloudinary, Local. One config. One line. Total control.",
+  "description": "Uploadex is a provider-agnostic, production-ready file upload module for NestJS. Built with a stream-first engine, strict validation, and support for S3, GCS, Azure, Cloudinary, and local uploads — all with one config, one line, and total control.",
   "author": "Yassine El Idrissi <yassineelidrissi02@outlook.com>",
-  "private": true,
-  "license": "UNLICENSED",
+  "private": false,
+  "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
