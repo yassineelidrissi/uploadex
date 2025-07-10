@@ -153,6 +153,15 @@ Covers:
 
 ---
 
+## Official Examples
+
+Looking for ready-to-use examples?
+
+👉 Check out the full [**Uploadex Examples Repository**](https://github.com/yassineelidrissi/uploadex-examples)
+Includes working setups for Local, S3, Azure, GCS, and Cloudinary — all pre-configured.
+
+---
+
 ## Author
 
 **Yassine El Idrissi** — [Portfolio](https://www.yaelidrissi.org/)  
