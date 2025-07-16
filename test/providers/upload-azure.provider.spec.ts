@@ -4,6 +4,22 @@ import { UploadOptionsToken } from '../../lib/strategies/upload-options.token';
 import { UploadModuleOptions } from '../../lib/interfaces/upload-module-options.interface';
 import { UploadexError } from '../../lib/errors/uploadex-error';
 import * as fs from 'fs/promises';
+import { Readable } from 'stream';
+
+jest.mock('fs', () => {
+    const original = jest.requireActual('fs');
+    return {
+        ...original,
+        createReadStream: jest.fn(() => {
+            const stream = new Readable();
+            stream._read = () => {
+                stream.push('fake stream content');
+                stream.push(null);
+            };
+            return stream;
+        }),
+    };
+});
 
 jest.mock('@azure/storage-blob', () => {
     const uploadData = jest.fn().mockResolvedValue(undefined);
@@ -105,18 +121,32 @@ describe('UploadAzureProvider', () => {
     });
 
     it('should upload multiple files using buffer and stream', async () => {
-        const files = [{
+        const files: Express.Multer.File[] = [
+            {
+                fieldname: 'file',
                 originalname: 'buffer.jpg',
+                encoding: '7bit',
                 mimetype: 'image/jpeg',
                 size: 500,
                 buffer: Buffer.from('buffered'),
-            }, {
+                destination: '',
+                filename: 'buffer.jpg',
+                path: '',
+                stream: new Readable(),
+            },
+            {
+                fieldname: 'file',
                 originalname: 'stream2.jpg',
+                encoding: '7bit',
                 mimetype: 'image/jpeg',
                 size: 5 * 1024 * 1024,
                 path: '/fake/path/stream2.jpg',
+                destination: '',
+                filename: 'stream2.jpg',
+                stream: new Readable(),
+                buffer: undefined as any,
             },
-        ] as Partial<Express.Multer.File>[] as Express.Multer.File[];
+        ];
 
         jest.spyOn(fs, 'readFile').mockImplementation((p) => {
             if (p.toString().includes('stream2.jpg')) throw new Error('simulate stream');

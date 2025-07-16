@@ -70,8 +70,12 @@ describe('upload-validation.helper', () => {
         it('should warn if unlink fails but not throw', async () => {
             const mockUnlink = fs.unlink as jest.Mock;
             mockUnlink.mockRejectedValueOnce(new Error('fail'));
-
+            
+            const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+            
             await expect(cleanupFile('/tmp/fail.jpg')).resolves.not.toThrow();
+            
+            warnSpy.mockRestore();
         });
     });
 

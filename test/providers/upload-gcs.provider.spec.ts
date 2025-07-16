@@ -4,7 +4,6 @@ import { UploadModuleOptions } from '../../lib/interfaces/upload-module-options.
 import { UploadOptionsToken } from '../../lib/strategies/upload-options.token';
 import { UploadexError } from '../../lib/errors/uploadex-error';
 import { Readable } from 'stream';
-import * as fs from 'fs';
 
 jest.mock('@google-cloud/storage', () => {
     const mockWriteStream = () => {
@@ -40,12 +39,13 @@ jest.mock('fs', () => {
         ...original,
         createReadStream: jest.fn(() => {
             const stream = new Readable();
-                stream._read = () => {
+            stream._read = () => {
                 stream.push('mock file content');
                 stream.push(null);
             };
             return stream;
         }),
+        unlink: jest.fn().mockResolvedValue(undefined),
     };
 });
 
@@ -93,6 +93,7 @@ describe('UploadGCSProvider', () => {
     });
 
     it('should upload single file using stream', async () => {
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
         const file = {
             originalname: 'dog.jpg',
             mimetype: 'image/jpeg',
@@ -104,15 +105,19 @@ describe('UploadGCSProvider', () => {
 
         expect(result.fileName).toBe('dog.jpg');
         expect(result.filePath).toContain('signed-url.com');
+        warnSpy.mockRestore();
     });
 
     it('should upload multiple files (buffer + stream)', async () => {
-        const files = [{
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        const files = [
+            {
                 originalname: '1.jpg',
                 mimetype: 'image/jpeg',
                 size: 5,
                 buffer: Buffer.from('img1'),
-            }, {
+            },
+            {
                 originalname: '2.jpg',
                 mimetype: 'image/jpeg',
                 size: 3000,
@@ -125,6 +130,7 @@ describe('UploadGCSProvider', () => {
         expect(result).toHaveLength(2);
         expect(result[0].filePath).toContain('signed-url.com');
         expect(result[1].filePath).toContain('signed-url.com');
+        warnSpy.mockRestore();
     });
 
     it('should throw UploadexError if no file passed to single upload', async () => {

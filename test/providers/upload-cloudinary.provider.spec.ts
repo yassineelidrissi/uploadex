@@ -8,21 +8,20 @@ import { Readable } from 'stream';
 
 jest.mock('cloudinary', () => {
     const { Writable } = require('stream');
-
     return {
         v2: {
             uploader: {
                 upload_stream: (_opts: any, callback: Function) => {
                     const writable = new Writable({
-                    write(_chunk, _encoding, done) {
-                        done();
-                    },
-                    final(done) {
-                        callback(null, {
-                        secure_url: 'https://res.cloudinary.com/demo/image/upload/v1234567890/sample.jpg',
-                        });
-                        done();
-                    },
+                        write(_chunk, _encoding, done) {
+                            done();
+                        },
+                        final(done) {
+                            callback(null, {
+                                secure_url: 'https://res.cloudinary.com/demo/image/upload/v1234567890/sample.jpg',
+                            });
+                            done();
+                        },
                     });
                     return writable;
                 },
@@ -34,16 +33,18 @@ jest.mock('cloudinary', () => {
 
 jest.mock('fs', () => {
     const original = jest.requireActual('fs');
-        return {
+    const { Readable } = require('stream');
+    return {
         ...original,
         createReadStream: jest.fn(() => {
             const readable = new Readable();
-                readable._read = () => {
+            readable._read = () => {
                 readable.push('stream content');
                 readable.push(null);
             };
             return readable;
         }),
+        unlink: jest.fn().mockResolvedValue(undefined),
     };
 });
 
@@ -92,6 +93,7 @@ describe('UploadCloudinaryProvider', () => {
     });
 
     it('should upload single file using stream when buffer is skipped', async () => {
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
         const file = {
             originalname: 'photo.jpg',
             mimetype: 'image/jpeg',
@@ -103,15 +105,19 @@ describe('UploadCloudinaryProvider', () => {
 
         expect(result.fileName).toBe('photo.jpg');
         expect(result.filePath).toContain('cloudinary.com');
+        warnSpy.mockRestore();
     });
 
     it('should upload multiple files using buffers', async () => {
-        const files = [{
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        const files = [
+            {
                 originalname: 'file1.jpg',
                 mimetype: 'image/jpeg',
                 size: 50,
                 buffer: Buffer.from('buffer1'),
-            }, {
+            },
+            {
                 originalname: 'file2.jpg',
                 mimetype: 'image/jpeg',
                 size: 75,
@@ -123,15 +129,19 @@ describe('UploadCloudinaryProvider', () => {
 
         expect(result).toHaveLength(2);
         expect(result[0].filePath).toContain('cloudinary.com');
+        warnSpy.mockRestore();
     });
 
     it('should upload multiple files using stream', async () => {
-        const files = [{
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        const files = [
+            {
                 originalname: 'stream1.jpg',
                 mimetype: 'image/jpeg',
                 size: 1024 * 1024,
                 path: '/fake/path/stream1.jpg',
-            }, {
+            },
+            {
                 originalname: 'stream2.jpg',
                 mimetype: 'image/jpeg',
                 size: 1024 * 1024,
@@ -143,6 +153,7 @@ describe('UploadCloudinaryProvider', () => {
 
         expect(result).toHaveLength(2);
         expect(result[1].fileName).toBe('stream2.jpg');
+        warnSpy.mockRestore();
     });
 
     it('should throw UploadexError if file is missing', async () => {
